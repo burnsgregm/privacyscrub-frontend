@@ -3,7 +3,7 @@ import requests, time
 
 # --- INFRASTRUCTURE CONFIGURATION (Injected by Deployment Script) ---
 # The deployment script will replace this placeholder with the actual Cloud Run URL
-API_URL = "https://privacyscrub-api-whbrskh54q-uc.a.run.app"
+API_URL = "REPLACE_WITH_SERVICE_URL"
 API_KEY = "secret"
 # --------------------------------------------------------------------
 
