@@ -1,97 +1,72 @@
 import streamlit as st
-import requests, time, os
+import requests, time
 
-st.set_page_config(page_title="PrivacyScrub V4", layout="wide")
+st.set_page_config("PrivacyScrub Console", layout="wide")
+st.title("PrivacyScrub Enterprise Console")
 
-# Config
-API_URL = st.secrets.get("SERVICE_URL", os.environ.get("SERVICE_URL", "http://localhost:8080"))
+# Configuration Sidebar
+st.sidebar.header("Connection")
+API_URL = st.sidebar.text_input("API URL", placeholder="https://your-cloud-run-url.run.app")
+API_KEY = st.sidebar.text_input("API Key", type="password")
 
-# --- Sidebar: V4 Configuration ---
-st.sidebar.title("V4 Controls")
+st.sidebar.header("Privacy Settings")
+profile = st.sidebar.selectbox("Compliance Profile", ["NONE", "GDPR", "CCPA", "HIPAA_SAFE_HARBOR"])
+mode = st.sidebar.radio("Redaction Mode", ["blur", "pixelate", "black_box"])
 
-profile = st.sidebar.selectbox(
-    "Compliance Profile", 
-    ["NONE", "GDPR", "CCPA", "HIPAA_SAFE_HARBOR"],
-    help="Enforces strict preset configurations for regulatory compliance."
-)
+tab1, tab2 = st.tabs(["Single Image", "Video Job"])
+headers = {"X-API-KEY": API_KEY}
 
-st.sidebar.subheader("Overrides")
-mode = st.sidebar.radio("Mode", ["blur", "pixelate", "black_box"])
-target_faces = st.sidebar.checkbox("Redact Faces", True)
-target_plates = st.sidebar.checkbox("Redact Plates", True)
-target_text = st.sidebar.checkbox("Redact Text (OCR)", False)
-target_logos = st.sidebar.checkbox("Redact Logos", False)
-coords_only = st.sidebar.checkbox("Coordinates Only (JSON)", False)
-
-st.sidebar.subheader("Advanced")
-roi_input = st.sidebar.text_input("ROI (x1,y1,x2,y2)", placeholder="0.0,0.0,1.0,1.0")
-
-# --- Main UI ---
-st.title("PrivacyScrub V4")
-st.caption(f"Backend Active: {API_URL}")
-
-tab1, tab2 = st.tabs(["Image Analysis", "Video Pipeline"])
-
-# Tab 1: Image
 with tab1:
-    img_file = st.file_uploader("Upload Image", type=["jpg", "png"])
-    if img_file and st.button("Process Image"):
-        with st.spinner("Running V4 Multi-Model Inference..."):
+    st.subheader("Image Anonymization")
+    img = st.file_uploader("Upload Image", type=['jpg', 'png', 'jpeg'])
+    if img and st.button("Process Image"):
+        with st.spinner("Redacting PII..."):
+            files = {"file": img.getvalue()}
+            data = {"profile": profile, "mode": mode}
             try:
-                files = {"file": img_file.getvalue()}
-                data = {
-                    "profile": profile, "mode": mode, 
-                    "target_faces": target_faces, "target_plates": target_plates,
-                    "target_text": target_text, "target_logos": target_logos,
-                    "coordinates_only": coords_only, "roi": roi_input
-                }
-                resp = requests.post(f"{API_URL}/v1/anonymize-image", files=files, data=data)
-                
-                if resp.status_code == 200:
-                    if coords_only:
-                        st.json(resp.json())
-                    else:
-                        col1, col2 = st.columns(2)
-                        col1.image(img_file, caption="Original")
-                        col2.image(resp.content, caption="Anonymized (Metadata Stripped)")
+                r = requests.post(f"{API_URL}/v1/anonymize-image", headers=headers, files=files, data=data)
+                if r.status_code == 200:
+                    c1, c2 = st.columns(2)
+                    c1.image(img, caption="Original")
+                    c2.image(r.content, caption="Anonymized")
                 else:
-                    st.error(f"Failed: {resp.text}")
-            except Exception as e: st.error(f"Error: {e}")
+                    st.error(f"API Error: {r.text}")
+            except Exception as e:
+                st.error(f"Connection Error: {e}")
 
-# Tab 2: Video
 with tab2:
-    vid_file = st.file_uploader("Upload Video", type=["mp4"])
-    if vid_file and st.button("Start Job"):
-        with st.spinner("Uploading & Dispatching..."):
+    st.subheader("Batch Video Processing")
+    vid = st.file_uploader("Upload Video", type=['mp4'])
+    if vid and st.button("Start Processing Job"):
+        with st.spinner("Uploading and initializing job..."):
             try:
-                files = {"file": vid_file.getvalue()}
-                resp = requests.post(f"{API_URL}/v1/anonymize-video", files=files, data={"profile": profile})
-                
-                if resp.status_code == 200:
-                    job_id = resp.json()["job_id"]
-                    st.success(f"Job Dispatched: {job_id}")
+                files = {"file": vid.getvalue()}
+                data = {"profile": profile}
+                r = requests.post(f"{API_URL}/v1/anonymize-video", headers=headers, files=files, data=data)
+                if r.status_code == 200:
+                    job_id = r.json()["job_id"]
+                    st.success(f"Job Initialized: {job_id}")
                     
-                    # Poll Status
                     status_placeholder = st.empty()
                     bar = st.progress(0)
                     
                     while True:
                         time.sleep(3)
-                        job_data = requests.get(f"{API_URL}/v1/jobs/{job_id}").json()
-                        status = job_data.get("status")
+                        stat = requests.get(f"{API_URL}/v1/jobs/{job_id}", headers=headers).json()
+                        status = stat['status']
+                        prog = stat.get('progress', 0.0)
+                        
+                        status_placeholder.info(f"Status: {status} | Progress: {int(prog*100)}%")
+                        bar.progress(prog)
                         
                         if status == "COMPLETED":
-                            bar.progress(100)
-                            status_placeholder.success("Processing Complete")
-                            st.video(job_data.get("output_url"))
+                            st.success("Processing Complete!")
+                            st.markdown(f"[Download Anonymized Video]({stat['output_url']})")
                             break
-                        elif status == "FAILED":
-                            status_placeholder.error(f"Job Failed: {job_data.get('error_message')}")
+                        if status in ["FAILED", "CANCELLED"]:
+                            st.error(f"Job Failed: {stat.get('error_message')}")
                             break
-                        else:
-                            # Estimate progress based on chunks
-                            total = job_data.get("chunks_total", 1)
-                            done = job_data.get("chunks_completed", 0)
-                            if total > 0: bar.progress(int((done / total) * 90))
-                            status_placeholder.info(f"Status: {status} (Chunks: {done}/{total})")
-            except Exception as e: st.error(f"Error: {e}")
+                else:
+                    st.error(f"API Error: {r.text}")
+            except Exception as e:
+                st.error(f"Connection Error: {e}")
