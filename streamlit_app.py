@@ -1,10 +1,11 @@
 import streamlit as st
-import requests, time
+import requests
+import time
 
 # --- INFRASTRUCTURE CONFIGURATION (Updated) ---
-# 1. Update this to the "gateway_url" output from your Terraform apply
-API_URL = "https://privacyscrub-gateway-whbrskh54q-uc.a.run.app"
-API_KEY = "secret" # Note: V5 Gateway currently allows open access (auth is a future step)
+# FIX: Pointing to the active V5 Gateway Service
+API_URL = "https://privacyscrub-gateway-138163390354.us-central1.run.app"
+API_KEY = "secret" # Placeholder for future auth
 # -----------------------------------------------------
 
 st.set_page_config("PrivacyScrub Console", layout="wide")
@@ -29,23 +30,25 @@ with tab1:
     st.subheader("Image Anonymization")
     img = st.file_uploader("Upload Image", type=['jpg', 'png', 'jpeg'])
     if img and st.button("Process Image"):
-        # This will 404 until /v1/anonymize-image is added to gateway/main.py
-        with st.spinner("Redacting PII..."):
+        with st.spinner("Redacting PII via GPU Worker..."):
             files = {"file": img.getvalue()}
+            # Data must be sent as string representations for Multipart form data
             data = {
-                "profile": profile, "mode": mode,
-                "target_faces": t_faces, "target_plates": t_plates,
-                "target_logos": t_logos, "target_text": t_text
+                "profile": profile, 
+                "mode": mode,
+                "target_logos": str(t_logos).lower(), # Convert bool to string for consistency
+                "target_text": str(t_text).lower()
             }
             try:
-                # 2. Note: This endpoint is missing in current V5 Gateway
+                # Gateway forwards this to the GPU Worker
                 r = requests.post(f"{API_URL}/v1/anonymize-image", headers=headers, files=files, data=data)
+                
                 if r.status_code == 200:
                     c1, c2 = st.columns(2)
                     c1.image(img, caption="Original")
                     c2.image(r.content, caption="Anonymized")
                 else:
-                    st.error(f"API Error: {r.text}")
+                    st.error(f"API Error ({r.status_code}): {r.text}")
             except Exception as e:
                 st.error(f"Connection Error: {e}")
 
@@ -53,12 +56,12 @@ with tab2:
     st.subheader("Batch Video Processing")
     vid = st.file_uploader("Upload Video", type=['mp4'])
     if vid and st.button("Start Processing Job"):
-        with st.spinner("Initializing Cloud Job..."):
+        with st.spinner("Uploading to Cloud Storage & Queuing Job..."):
             try:
                 files = {"file": vid.getvalue()}
-                data = {"webhook_url": ""} # V5 expects this field form-encoded
+                data = {"webhook_url": ""} 
                 
-                # 3. Update: Endpoint changed from /v1/anonymize-video to /v1/video
+                # Gateway uploads to GCS -> Firestore -> Cloud Tasks
                 r = requests.post(f"{API_URL}/v1/video", headers=headers, files=files, data=data)
                 
                 if r.status_code == 200:
@@ -68,13 +71,13 @@ with tab2:
                     status_ph = st.empty()
                     bar = st.progress(0)
                     
+                    # Polling Loop
                     while True:
                         time.sleep(3)
                         try:
                             stat = requests.get(f"{API_URL}/v1/jobs/{job_id}", headers=headers).json()
                             s = stat.get('status', 'UNKNOWN')
                             
-                            # 4. Update: Calculate progress from raw chunks
                             chunks_total = stat.get('chunks_total', 0)
                             chunks_completed = stat.get('chunks_completed', 0)
                             
@@ -88,9 +91,8 @@ with tab2:
                             
                             if s == "COMPLETED":
                                 st.success("Processing Complete!")
-                                # Output URL from V5 backend
                                 output_url = stat.get('output_url', '#')
-                                st.markdown(f"[Download Result]({output_url})")
+                                st.markdown(f"### [Download Result]({output_url})")
                                 break
                                 
                             if s in ["FAILED", "CANCELLED"]:
