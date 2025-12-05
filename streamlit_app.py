@@ -27,7 +27,6 @@ tab1, tab2 = st.tabs(["Single Image", "Video Job"])
 
 with tab1:
     st.subheader("Image Anonymization")
-    st.info("ℹ️ V5 Deployment Note: Image endpoint is currently pending backend implementation.")
     img = st.file_uploader("Upload Image", type=['jpg', 'png', 'jpeg'])
     if img and st.button("Process Image"):
         # This will 404 until /v1/anonymize-image is added to gateway/main.py
