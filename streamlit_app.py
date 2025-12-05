@@ -9,7 +9,7 @@ API_KEY = "secret" # Placeholder for future auth
 # -----------------------------------------------------
 
 st.set_page_config("PrivacyScrub Console", layout="wide")
-st.title("PrivacyScrub Enterprise Console")
+st.title("PrivacyScrub Enterprise Console V5")
 
 # Sidebar - Privacy Controls
 st.sidebar.header("Privacy Controls")
